@@ -581,7 +581,7 @@ def check_uvdata_keyword_init(case):
         new_kwargs = copy.deepcopy(base_kwargs)
         new_kwargs['write_files'] = True
 
-        uvd = pyuvsim.simsetup.initialize_uvdata_from_keywords(**new_kwargs)
+        pyuvsim.simsetup.initialize_uvdata_from_keywords(**new_kwargs)
         assert os.path.exists(layout_fname)
         assert os.path.exists(obsparam_fname)
 
@@ -594,7 +594,7 @@ def check_uvdata_keyword_init(case):
         new_kwargs['array_layout'] = antpos_d
         new_kwargs['complete'] = True
 
-        uvd = pyuvsim.simsetup.initialize_uvdata_from_keywords(**new_kwargs)
+        pyuvsim.simsetup.initialize_uvdata_from_keywords(**new_kwargs)
         assert os.path.exists(layout_fname)
         assert os.path.exists(obsparam_fname)
 
@@ -604,12 +604,11 @@ def check_uvdata_keyword_init(case):
 
 def test_uvfits_to_config():
     """
-        Loopback test of reading parameters from uvfits file, generating uvfits file, and reading in again.
+    Loopback test of reading parameters from uvfits file, generating uvfits file, and reading in again.
     """
     opath = 'uvfits_yaml_temp'
     param_filename = 'obsparam.yaml'
     second_param_filename = 'test2_config.yaml'
-    telescope_config = 'test_telescope_config.yaml'
     if not os.path.exists(opath):
         os.makedirs(opath)        # Directory will be deleted when test completed.
 
@@ -783,7 +782,10 @@ def test_mock_catalogs():
     cats = {}
     for arr in arrangements:
         # rseed is only used by the "random" mock catalog
-        cat, mock_kwds = pyuvsim.simsetup.create_mock_catalog(time, arr, rseed=2458098)
+        if arr == "random":
+            cat, mock_kwds = pyuvsim.simsetup.create_mock_catalog(time, arr, rseed=2458098)
+        else:
+            cat, mock_kwds = pyuvsim.simsetup.create_mock_catalog(time, arr)
         cats[arr] = cat
 
     # For each mock catalog, verify the Ra/Dec source positions against a text catalog.
@@ -805,6 +807,7 @@ def test_mock_catalogs():
 
     cat, mock_kwds = pyuvsim.simsetup.create_mock_catalog(time, 'random', save=True)
     loc = eval(mock_kwds['array_location'])
+
     loc = EarthLocation.from_geodetic(loc[1], loc[0], loc[2])    # Lon, Lat, alt
     fname = 'mock_catalog_random.npz'
     alts_reload = np.load(fname)['alts']
