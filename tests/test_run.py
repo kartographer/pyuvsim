@@ -30,6 +30,8 @@ except ImportError:
     from pyuvdata.tests import check_warnings
 
 pytest.importorskip("mpi4py")  # noqa
+# everything in this file requires 2 PUs
+pytestmark = pytest.mark.parallel(2)
 
 future_shapes_options = [True]
 if hasattr(UVData(), "use_current_array_shapes"):
@@ -54,7 +56,6 @@ def goto_tempdir(tmpdir):
 @pytest.mark.parametrize(
     "paramfile", ["param_1time_1src_testcat.yaml", "param_1time_1src_testvot.yaml"]
 )
-@pytest.mark.parallel(2)
 def test_run_paramfile_uvsim(goto_tempdir, paramfile):
     # Test vot and txt catalogs for parameter simulation
     # Compare to reference files.
@@ -81,27 +82,32 @@ def test_run_paramfile_uvsim(goto_tempdir, paramfile):
     uv_new.unproject_phase(use_ant_pos=True)
     uv_new._consolidate_phase_center_catalogs(other=uv_ref)
 
-    assert uvutils._check_history_version(uv_new.history, pyradiosky.__version__)
-    assert uvutils._check_history_version(uv_new.history, pyuvdata.__version__)
-    assert uvutils._check_history_version(uv_new.history, pyuvsim.__version__)
-    assert uvutils._check_history_version(uv_new.history, paramfile)
-    assert uvutils._check_history_version(uv_new.history, "triangle_bl_layout.csv")
-    assert uvutils._check_history_version(
-        uv_new.history, "28m_triangle_10time_10chan.yaml"
-    )
-    assert uvutils._check_history_version(uv_new.history, "Npus =")
+    if pyuvsim.mpi.rank == 0:
+        assert uvutils._check_history_version(uv_new.history, pyradiosky.__version__)
+        assert uvutils._check_history_version(uv_new.history, pyuvdata.__version__)
+        assert uvutils._check_history_version(uv_new.history, pyuvsim.__version__)
+        assert uvutils._check_history_version(uv_new.history, paramfile)
+        assert uvutils._check_history_version(uv_new.history, "triangle_bl_layout.csv")
+        assert uvutils._check_history_version(
+            uv_new.history, "28m_triangle_10time_10chan.yaml"
+        )
+        assert uvutils._check_history_version(uv_new.history, "Npus =")
 
-    # Reset parts that will deviate
-    uv_new.history = uv_ref.history
-    uv_ref.dut1 = uv_new.dut1
-    uv_ref.gst0 = uv_new.gst0
-    uv_ref.rdate = uv_new.rdate
+        # Reset parts that will deviate
+        uv_new.history = uv_ref.history
+        uv_new.object_name = uv_ref.object_name
+        uv_ref.dut1 = uv_new.dut1
+        uv_ref.gst0 = uv_new.gst0
+        uv_ref.rdate = uv_new.rdate
 
-    uv_ref.conjugate_bls()
-    uv_ref.reorder_blts()
-    uv_ref.integration_time = np.full_like(uv_ref.integration_time, 11.0)
+        uv_ref.conjugate_bls()
+        uv_ref.reorder_blts()
+        uv_ref.integration_time = np.full_like(uv_ref.integration_time, 11.0)
 
-    assert uv_new == uv_ref
+        # remove filename attribute to ensure equality
+        uv_new.filename = None
+        uv_ref.filename = None
+        assert uv_new == uv_ref
 
 
 @pytest.mark.filterwarnings("ignore:Input ra and dec parameters are being used instead")
@@ -118,12 +124,15 @@ def test_run_paramfile_uvsim(goto_tempdir, paramfile):
         ("monopole-nonflat", 3e-4),
     ],
 )
-def test_analytic_diffuse(model, tol, tmpdir):
+@pytest.mark.parametrize("backend", ["rma", "send_recv"])
+@pytest.mark.parametrize("progbar", ["progsteps", "tqdm"])
+def test_analytic_diffuse(model, tol, tmpdir, backend, progbar):
     # Generate the given model and simulate for a few baselines.
     # Import from analytic_diffuse  (consider moving to rasg_affiliates?)
-    pytest.importorskip("analytic_diffuse")
+    analytic_diffuse = pytest.importorskip("analytic_diffuse")
     pytest.importorskip("astropy_healpix")
-    import analytic_diffuse
+    if progbar == "tqdm":
+        pytest.importorskip("tqdm")
 
     modname = model
     use_w = False
@@ -176,14 +185,17 @@ def test_analytic_diffuse(model, tol, tmpdir):
     with open(obspar_path, "w") as ofile:
         yaml.dump(obspar, ofile, default_flow_style=False)
 
-    uv_out = pyuvsim.run_uvsim(obspar_path, return_uv=True)
-    # Convert from Jy to K sr
-    dat = uv_out.data_array[:, 0, 0] * jy_to_ksr(uv_out.freq_array[0]).value
-    # Evaluate the solution and compare to visibilities.
-    soln = analytic_diffuse.get_solution(modname)
-    uvw_lam = uv_out.uvw_array * uv_out.freq_array[0] / c_ms
-    ana = soln(uvw_lam, **params)
-    np.testing.assert_allclose(ana / 2, dat, atol=tol, rtol=0)
+    uv_out = pyuvsim.run_uvsim(
+        obspar_path, return_uv=True, backend=backend, progbar=progbar
+    )
+    if pyuvsim.mpi.rank == 0:
+        # Convert from Jy to K sr
+        dat = uv_out.data_array[:, 0, 0] * jy_to_ksr(uv_out.freq_array[0]).value
+        # Evaluate the solution and compare to visibilities.
+        soln = analytic_diffuse.get_solution(modname)
+        uvw_lam = uv_out.uvw_array * uv_out.freq_array[0] / c_ms
+        ana = soln(uvw_lam, **params)
+        np.testing.assert_allclose(ana / 2, dat, atol=tol, rtol=0)
 
 
 @pytest.mark.filterwarnings("ignore:Fixing auto polarization power beams")
@@ -259,7 +271,7 @@ def test_run_paramdict_uvsim(rename_beamfits, tmp_path):
         msg = ""
         params = pyuvsim.simsetup._config_str_to_dict(param_file)
 
-    with check_warnings(warn_type, match=msg):
+    with uvtest.check_warnings(warn_type, match=msg):
         pyuvsim.run_uvsim(params, return_uv=True)
 
 
@@ -275,11 +287,7 @@ def test_run_gleam_uvsim(spectral_type):
     params["sources"].pop("max_flux")
 
     uv_out = pyuvsim.run_uvsim(params, return_uv=True)
-    if hasattr(uv_out, "telescope"):
-        assert uv_out.telescope.name == "Triangle"
-    else:
-        # this can be removed when we require pyuvdata >= 3.0
-        assert uv_out.telescope_name == "Triangle"
+    assert uv_out.telescope_name == "Triangle"
 
     file_name = f"gleam_triangle_{spectral_type}.uvh5"
     uv_in = UVData.from_file(os.path.join(SIM_DATA_PATH, file_name))
@@ -302,9 +310,13 @@ def test_run_gleam_uvsim(spectral_type):
 
 @pytest.mark.filterwarnings("ignore:The reference_frequency is aliased as `frequency`")
 @pytest.mark.parametrize("spectral_type", ["subband", "spectral_index"])
-def test_zenith_spectral_sim(spectral_type, tmpdir):
+@pytest.mark.parametrize("backend", ["rma", "send_recv"])
+@pytest.mark.parametrize("progbar", ["progsteps", "tqdm"])
+def test_zenith_spectral_sim(spectral_type, tmpdir, backend, progbar):
     # Make a power law source at zenith in three ways.
     # Confirm that simulated visibilities match expectation.
+    if progbar == "tqdm":
+        pytest.importorskip("tqdm")
 
     params = pyuvsim.simsetup._config_str_to_dict(
         os.path.join(SIM_DATA_PATH, "test_config", "param_1time_1src_testcat.yaml")
@@ -346,10 +358,10 @@ def test_zenith_spectral_sim(spectral_type, tmpdir):
     params["time"]["start_time"] = kwds["time"]
     params["select"] = {"antenna_nums": [1, 2]}
 
-    uv_out = pyuvsim.run_uvsim(params, return_uv=True)
-
-    for ii in range(uv_out.Nbls):
-        assert np.allclose(uv_out.data_array[ii, :, 0], spectrum / 2)
+    uv_out = pyuvsim.run_uvsim(params, return_uv=True, backend=backend, progbar=progbar)
+    if pyuvsim.mpi.rank == 0:
+        for ii in range(uv_out.Nbls):
+            assert np.allclose(uv_out.data_array[ii, :, 0], spectrum / 2)
 
 
 def test_pol_error():
@@ -456,39 +468,31 @@ def test_sim_on_moon(future_shapes, goto_tempdir, selenoid):
     uv_out = pyuvsim.uvsim.run_uvdata_uvsim(
         uv_obj, beam_list, beam_dict, catalog=sources, quiet=True
     )
-    assert uvutils._check_history_version(uv_out.history, pyradiosky.__version__)
-    assert uvutils._check_history_version(uv_out.history, pyuvdata.__version__)
-    assert uvutils._check_history_version(uv_out.history, pyuvsim.__version__)
-    assert uvutils._check_history_version(uv_out.history, uv_obj.filename[0])
-    assert uvutils._check_history_version(uv_out.history, "Npus =")
+    if pyuvsim.mpi.rank == 0:
+        assert uvutils._check_history_version(uv_out.history, pyradiosky.__version__)
+        assert uvutils._check_history_version(uv_out.history, pyuvdata.__version__)
+        assert uvutils._check_history_version(uv_out.history, pyuvsim.__version__)
+        assert uvutils._check_history_version(uv_out.history, uv_obj.filename[0])
+        assert uvutils._check_history_version(uv_out.history, "Npus =")
 
     assert uv_out.extra_keywords["world"] == "moon"
-    if hasattr(uv_out, "telescope"):
-        assert uv_out.telescope.location.ellipsoid == selenoid
-    else:
-        # this can be removed when we require pyuvdata >= 3.0
-        assert uv_out._telescope_location.ellipsoid == selenoid
+    assert uv_out._telescope_location.ellipsoid == selenoid
     assert np.allclose(uv_out.data_array[:, :, 0], 0.5)
 
     # Lunar Frame Roundtripping
     param_dict["filing"]["outdir"] = str(tmpdir)
+
     uv_filename = pyuvsim.utils.write_uvdata(
         uv_out, param_dict, return_filename=True, quiet=True
     )
     uv_compare = UVData()
-    uv_compare.read(uv_filename)
-    if hasattr(uv_compare, "use_current_array_shapes") and future_shapes:
-        uv_compare.use_future_array_shapes()
-    if hasattr(uv_obj, "telescope"):
-        assert uv_out.telescope._location == uv_compare.telescope._location
-    else:
-        # this can be removed when we require pyuvdata >= 3.0
-        assert np.allclose(uv_out.telescope_location, uv_compare.telescope_location)
-        assert uv_out._telescope_location.frame == uv_compare._telescope_location.frame
-        assert uv_compare._telescope_location.ellipsoid == selenoid
+    uv_compare.read(uv_filename, use_future_array_shapes=future_shapes)
+    assert np.allclose(uv_out.telescope_location, uv_compare.telescope_location)
+    assert uv_out._telescope_location.frame == uv_compare._telescope_location.frame
+    assert uv_compare._telescope_location.ellipsoid == selenoid
 
-    # Cleanup
-    os.remove(uv_filename)
+        # Cleanup
+        os.remove(uv_filename)
 
 
 @pytest.mark.filterwarnings("ignore:This method will be removed in version 3.0")
@@ -539,16 +543,8 @@ def test_lunar_gauss(goto_tempdir, selenoid):
 
     params["filing"]["outdir"] = str(tmpdir)
 
-    try:
-        uv_out = pyuvsim.run_uvsim(params, return_uv=True, quiet=True)
-    except SpiceUNKNOWNFRAME as err:
-        pytest.skip("SpiceUNKNOWNFRAME error: " + str(err))
-
-    if hasattr(uv_out, "telescope"):
-        assert uv_out.telescope.location.ellipsoid == selenoid
-    else:
-        # this can be removed when we require pyuvdata >= 3.0
-        assert uv_out._telescope_location.ellipsoid == selenoid
+    uv_out = pyuvsim.run_uvsim(params, return_uv=True, quiet=True)
+    assert uv_out._telescope_location.ellipsoid == selenoid
 
     # Skymodel and update positions
 
