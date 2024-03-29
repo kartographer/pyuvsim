@@ -662,8 +662,6 @@ def _run_uvsim_rma(
     rank = mpi.get_rank()
     comm = mpi.get_comm()
     if rank == 0:
-        if "world" in uv_container.extra_keywords:
-            uv_container.extra_keywords["world"] = uv_container.extra_keywords["world"]
         vis_data = mpi.MPI.Win.Create(
             uv_container._data_array.value, comm=mpi.world_comm
         )
@@ -754,10 +752,7 @@ def _run_uvsim_send_recv(
         chunksize1 = int(np.ceil(0.1 * Nblts * Nfreqs / n_workers))
         chunksize2 = int(np.ceil(Nsrcs / Nsky_parts))
         all_iter = simutils._chunked_iterator_product(
-            task_inds,
-            src_inds,
-            chunksize1,
-            chunksize2,
+            task_inds, src_inds, chunksize1, chunksize2
         )
         with pbar as pbar:
             while completed_workers < n_workers:
@@ -841,11 +836,7 @@ def _run_uvsim_send_recv(
     return None, uvdata_indices
 
 
-def _get_pbar(
-    progbar,
-    Ntasks_tot,
-    rank,
-):
+def _get_pbar(progbar, Ntasks_tot, rank):
     if progbar not in ["tqdm", "progsteps"]:
         raise ValueError(
             "The progbar keyword must be one of "
@@ -1043,6 +1034,10 @@ def run_uvdata_uvsim(
         print("Nsrcs:", catalog.Ncomponents, flush=True)
 
     uv_container = None
+    if rank == 0:
+        uv_container = simsetup._complete_uvdata(input_uv, inplace=False)
+        if "world" in input_uv.extra_keywords:
+            uv_container.extra_keywords["world"] = input_uv.extra_keywords["world"]
 
     Nbls = input_uv.Nbls
     Nblts = input_uv.Nblts
@@ -1075,14 +1070,19 @@ def run_uvdata_uvsim(
                 Nblts, Nfreqs, Nsrcs, rank - 1, Npus - 1
             )
 
-        local_task_iter = uvdata_to_task_iter(
-            task_inds,
-            input_uv,
-            catalog.subselect(src_inds),
-            beam_list,
-            beam_dict,
-            Nsky_parts=Nsky_parts,
-        )
+            local_task_iter = uvdata_to_task_iter(
+                task_inds,
+                input_uv,
+                catalog.subselect(src_inds),
+                beam_list,
+                beam_dict,
+                Nsky_parts=Nsky_parts,
+            )
+    elif backend == "send_recv":
+        # hack this a little bit, we want to have Nbls * Nfreqs * Ntimes
+        # total tasks we are distributing over all PUs but then we
+        # sum up over all PUs here in the next few lines
+        Ntasks_local = Nblts * Nfreqs / Npus
 
     Ntasks_tot = Ntasks_local * Nsky_parts
     # Sum all the tasks across each node

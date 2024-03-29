@@ -67,16 +67,12 @@ def start_mpi(block_nonroot_stdout=True, thread_multiple=False):
     global world_comm, node_comm, rank_comm, rank, Npus, status
 
     if not MPI.Is_initialized():
-<<<<<<< HEAD
-        MPI.Init_thread(
-            MPI.THREAD_SERIALIZED
-        )  # RMA is incompatible with THREAD_MULTIPLE.
-=======
         if not thread_multiple:
-            MPI.Init_thread(MPI.THREAD_SERIALIZED)  # RMA is incompatible with THREAD_MULTIPLE.
+            MPI.Init_thread(
+                MPI.THREAD_SERIALIZED
+            )  # RMA is incompatible with THREAD_MULTIPLE.
         else:
             MPI.Init_thread(MPI.THREAD_MULTIPLE)
->>>>>>> 34767ae (Adds second backend for send/receive w/ load balancing. progbar plugin)
         atexit.register(MPI.Finalize)
     world_comm = MPI.COMM_WORLD
     node_comm = world_comm.Split_type(MPI.COMM_TYPE_SHARED)
