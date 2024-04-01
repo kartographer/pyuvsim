@@ -41,7 +41,6 @@ from .simsetup import SkyModelData
 from .telescope import Telescope
 
 __all__ = ["UVTask", "UVEngine", "uvdata_to_task_iter", "run_uvsim", "run_uvdata_uvsim"]
-__all__ = ["UVTask", "UVEngine", "uvdata_to_task_iter", "run_uvsim", "run_uvdata_uvsim"]
 
 
 class UVTask:
