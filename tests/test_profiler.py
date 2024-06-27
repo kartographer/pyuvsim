@@ -7,8 +7,9 @@ import re
 import shutil
 
 import pytest
-import pyuvsim
 from numpy import unique
+
+import pyuvsim
 from pyuvsim.data import DATA_PATH as SIM_DATA_PATH
 
 try:
