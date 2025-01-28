@@ -392,10 +392,10 @@ class UVEngine:
         vij = np.sum(vij, axis=2)
 
         Nfeeds = vij.shape[0]
-        assert (Nfeeds<=2)
+        assert Nfeeds <= 2
         # Reshape to be [xx] for one feed or [xx, yy, xy, yx] for two feeds
         if Nfeeds == 1:
-            vis_vector = np.asarray([vij[0,0]])
+            vis_vector = np.asarray([vij[0, 0]])
         elif Nfeeds == 2:
             vis_vector = np.asarray([vij[0, 0], vij[1, 1], vij[0, 1], vij[1, 0]])
         return vis_vector
